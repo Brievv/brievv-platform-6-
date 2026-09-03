@@ -1,0 +1,834 @@
+// ============================================================
+// BRIEVV — Database Schema (PostgreSQL via Prisma)
+// See docs/ARCHITECTURE.md for the domain model rationale.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------
+// ENUMS — state machines (spec §54-56)
+// ---------------------------------------------------------------
+
+enum UserRole {
+  SUPER_ADMIN
+  OPERATIONS_ADMIN
+  PROJECT_MANAGER
+  FINANCE_ADMIN
+  QUALITY_MANAGER
+  PROFESSIONAL
+  CLIENT
+  SUPPORT_AGENT
+}
+
+enum ProjectStatus {
+  DRAFT
+  SUBMITTED
+  ANALYZING
+  QUOTE_READY
+  QUOTE_SENT
+  QUOTE_ACCEPTED
+  PAYMENT_PENDING
+  READY_TO_START
+  MATCHING
+  TEAM_ASSIGNED
+  IN_PROGRESS
+  INTERNAL_REVIEW
+  CLIENT_REVIEW
+  REVISION
+  FINAL_QA
+  DELIVERED
+  COMPLETED
+  CANCELLED
+  ARCHIVED
+}
+
+enum QuoteStatus {
+  DRAFT
+  GENERATING
+  PENDING_REVIEW
+  READY
+  SENT
+  VIEWED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  REVISED
+  CANCELLED
+}
+
+enum ProfessionalStatus {
+  APPLIED
+  UNDER_REVIEW
+  DOCUMENTS_REQUIRED
+  VERIFICATION_PENDING
+  VERIFIED
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  REJECTED
+}
+
+enum TaskStatus {
+  BACKLOG
+  READY
+  IN_PROGRESS
+  REVIEW
+  BLOCKED
+  APPROVED
+  COMPLETED
+}
+
+enum TaskPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  PAID
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+}
+
+enum PaymentKind {
+  DEPOSIT
+  MILESTONE
+  FULL
+  CHANGE_ORDER
+  PAYOUT
+}
+
+enum FileFolder {
+  CLIENT_INPUTS
+  WORKING_FILES
+  REVIEWS
+  DELIVERABLES
+  FINAL
+}
+
+enum NotificationChannel {
+  IN_APP
+  EMAIL
+  SMS
+}
+
+// ---------------------------------------------------------------
+// IDENTITY & ORGANIZATIONS (multi-tenancy — spec §27)
+// ---------------------------------------------------------------
+
+model User {
+  id                String    @id @default(uuid())
+  email             String    @unique
+  emailVerifiedAt   DateTime?
+  passwordHash      String? // null when using OAuth-only
+  name              String
+  avatarUrl         String?
+  phone             String?
+  role              UserRole  @default(CLIENT)
+  timezone          String    @default("UTC")
+  mfaEnabled        Boolean   @default(false)
+  mfaSecret         String? // encrypted at rest
+  isActive          Boolean   @default(true)
+  lastLoginAt       DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  deletedAt         DateTime?
+
+  memberships       OrganizationMember[]
+  clientProfile     ClientProfile?
+  professionalProfile ProfessionalProfile?
+  notifications     Notification[]
+  sentMessages      Message[]             @relation("MessageSender")
+  auditLogs         AuditLog[]
+  sessions          Session[]
+  accounts          Account[]
+  reviewsGiven      Review[]              @relation("ReviewAuthor")
+  supportTickets    SupportTicket[]
+
+  @@index([email])
+  @@index([role])
+}
+
+// NextAuth.js adapter tables
+model Account {
+  id                String  @id @default(uuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(uuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Organization {
+  id          String   @id @default(uuid())
+  name        String
+  slug        String   @unique
+  logoUrl     String?
+  billingEmail String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deletedAt   DateTime?
+
+  members     OrganizationMember[]
+  projects    Project[]
+  invoices    Invoice[]
+
+  @@index([slug])
+}
+
+model OrganizationMember {
+  id             String       @id @default(uuid())
+  organizationId String
+  userId         String
+  role           UserRole     @default(CLIENT)
+  invitedAt      DateTime     @default(now())
+  joinedAt       DateTime?
+
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model ClientProfile {
+  id             String   @id @default(uuid())
+  userId         String   @unique
+  companyName    String?
+  jobTitle       String?
+  createdAt      DateTime @default(now())
+
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------
+// DISCIPLINES & SERVICES (admin-configurable — spec §1, §41)
+// ---------------------------------------------------------------
+
+model Discipline {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  description String?
+  isActive    Boolean  @default(true)
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  services           Service[]
+  projectDisciplines ProjectDiscipline[]
+  professionalDisciplines ProfessionalDiscipline[]
+}
+
+model Service {
+  id                 String     @id @default(uuid())
+  disciplineId       String
+  name               String
+  slug               String     @unique
+  description        String
+  typicalDeliverables String[]
+  exampleProjects    String[]
+  estimatedDeliveryLow  Int? // days
+  estimatedDeliveryHigh Int?
+  startingPriceLow   Int? // cents
+  startingPriceHigh  Int?
+  isActive           Boolean    @default(true)
+  createdAt          DateTime   @default(now())
+
+  discipline         Discipline @relation(fields: [disciplineId], references: [id])
+}
+
+// ---------------------------------------------------------------
+// PROJECTS / BRIEFS (spec §9, §54)
+// ---------------------------------------------------------------
+
+model Project {
+  id               String        @id @default(uuid())
+  referenceCode    String        @unique // e.g. BRV-2026-000123
+  organizationId   String?
+  createdByUserId  String
+
+  title            String
+  companyName      String?
+  location         String?
+  projectType      String?
+  scopeDescription String        @db.Text
+  jurisdiction     String?
+  requiredSoftware String[]
+  requiredCerts    String[]
+  deliverableFormat String?
+  revisionAllowance Int          @default(2)
+  budgetLow        Int?
+  budgetHigh       Int?
+  deadline         DateTime?
+  urgency          String? // standard | rush | asap
+
+  status           ProjectStatus @default(DRAFT)
+
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+  deletedAt        DateTime?
+
+  organization     Organization? @relation(fields: [organizationId], references: [id])
+
+  disciplines      ProjectDiscipline[]
+  members          ProjectMember[]
+  tasks            ProjectTask[]
+  milestones       ProjectMilestone[]
+  files            ProjectFile[]
+  quotes           Quote[]
+  payments         Payment[]
+  aiAnalyses       AIAnalysis[]
+  messageThreads   MessageThread[]
+  reviews          Review[]
+  assignments      Assignment[]
+  changeOrders     ChangeOrder[]
+  issues           ProjectIssue[]
+  approvals        Approval[]
+  statusHistory    ProjectStatusEvent[]
+
+  @@index([status])
+  @@index([organizationId])
+  @@index([referenceCode])
+}
+
+model ProjectStatusEvent {
+  id        String        @id @default(uuid())
+  projectId String
+  status    ProjectStatus
+  note      String?
+  actorId   String?
+  createdAt DateTime      @default(now())
+
+  project   Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model ProjectDiscipline {
+  id           String     @id @default(uuid())
+  projectId    String
+  disciplineId String
+
+  project      Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  discipline   Discipline @relation(fields: [disciplineId], references: [id])
+
+  @@unique([projectId, disciplineId])
+}
+
+model ProjectMember {
+  id           String   @id @default(uuid())
+  projectId    String
+  userId       String
+  roleOnProject String  // e.g. "Project Lead", "Client Contact"
+  addedAt      DateTime @default(now())
+
+  project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+model ProjectTask {
+  id             String       @id @default(uuid())
+  projectId      String
+  title          String
+  description    String?      @db.Text
+  assigneeId     String?
+  discipline     String?
+  priority       TaskPriority @default(MEDIUM)
+  status         TaskStatus   @default(BACKLOG)
+  deadline       DateTime?
+  estimatedHours Float?
+  actualHours    Float?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  project        Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  dependencies   TaskDependency[] @relation("DependentTask")
+  dependedOnBy   TaskDependency[] @relation("BlockingTask")
+  comments       TaskComment[]
+
+  @@index([projectId, status])
+}
+
+model TaskDependency {
+  id              String      @id @default(uuid())
+  taskId          String
+  dependsOnTaskId String
+
+  task            ProjectTask @relation("DependentTask", fields: [taskId], references: [id], onDelete: Cascade)
+  dependsOnTask   ProjectTask @relation("BlockingTask", fields: [dependsOnTaskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, dependsOnTaskId])
+}
+
+model TaskComment {
+  id        String      @id @default(uuid())
+  taskId    String
+  authorId  String
+  body      String      @db.Text
+  createdAt DateTime    @default(now())
+
+  task      ProjectTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model ProjectMilestone {
+  id          String    @id @default(uuid())
+  projectId   String
+  title       String
+  description String?
+  dueDate     DateTime?
+  completedAt DateTime?
+  amountCents Int? // for milestone billing
+  sortOrder   Int       @default(0)
+
+  project     Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// ---------------------------------------------------------------
+// FILES (spec §18-19, §71)
+// ---------------------------------------------------------------
+
+model ProjectFile {
+  id           String        @id @default(uuid())
+  projectId    String
+  folder       FileFolder    @default(CLIENT_INPUTS)
+  fileName     String
+  mimeType     String
+  sizeBytes    Int
+  storageKey   String        // S3/R2 object key — never expose directly
+  checksum     String?
+  scanStatus   String        @default("pending") // pending | clean | infected | failed
+  uploadedById String
+  isArchived   Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versions     FileVersion[]
+  analyses     AIAnalysis[]
+
+  @@index([projectId])
+}
+
+model FileVersion {
+  id          String      @id @default(uuid())
+  fileId      String
+  versionNum  Int
+  storageKey  String
+  uploadedById String
+  changeNote  String?
+  createdAt   DateTime    @default(now())
+
+  file        ProjectFile @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@unique([fileId, versionNum])
+}
+
+// ---------------------------------------------------------------
+// AI ANALYSIS & QUOTES (spec §10-12)
+// ---------------------------------------------------------------
+
+model AIAnalysis {
+  id                 String   @id @default(uuid())
+  projectId          String
+  fileId             String? // set for document-content analysis (spec §11); null for brief-level analysis (spec §10)
+  provider           String // anthropic | openai
+  model              String
+  promptVersion      String
+  inputSummary       Json // sanitized brief data sent to the model
+  rawResponse        Json // raw model output, retained for audit
+  complexityScore    Float?
+  identifiedDisciplines String[]
+  assumptions        String[]
+  missingInformation String[]
+  risks              String[]
+  requiresHumanReview Boolean @default(true)
+  createdAt          DateTime @default(now())
+
+  project            Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  file               ProjectFile? @relation(fields: [fileId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([fileId])
+}
+
+model PricingRule {
+  id               String   @id @default(uuid())
+  name             String
+  disciplineSlug   String?  // null = applies globally
+  basePriceCents   Int
+  complexityMultiplier Json // { simple: 1, medium: 1.6, large: 2.8 }
+  urgencyMultiplier    Json // { standard: 1, rush: 1.25, asap: 1.5 }
+  jurisdictionMultiplier Json?
+  platformMarginPercent Float @default(20)
+  isActive         Boolean  @default(true)
+  updatedByUserId  String?
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+}
+
+model Quote {
+  id             String      @id @default(uuid())
+  projectId      String
+  quoteNumber    String      @unique
+  status         QuoteStatus @default(DRAFT)
+
+  priceLowCents  Int
+  priceHighCents Int
+  currency       String      @default("USD")
+  timelineText   String
+  recommendedTeam String[]
+  scopeSummary   String      @db.Text
+  assumptions    String[]
+  exclusions     String[]
+  risks          String[]
+  milestones     Json? // [{ title, amountCents, dueOffsetDays }]
+  paymentSchedule Json?
+  expiresAt      DateTime?
+
+  generatedByAI  Boolean     @default(true)
+  reviewedByUserId String?
+  reviewedAt     DateTime?
+
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  project        Project     @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  revisions      QuoteRevision[]
+
+  @@index([projectId])
+  @@index([status])
+}
+
+model QuoteRevision {
+  id           String   @id @default(uuid())
+  quoteId      String
+  changedById  String?
+  diff         Json // { field: { before, after } }
+  reason       String?
+  createdAt    DateTime @default(now())
+
+  quote        Quote    @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+}
+
+model ChangeOrder {
+  id                String   @id @default(uuid())
+  projectId         String
+  requestedById     String
+  originalScope     String   @db.Text
+  requestedScope    String   @db.Text
+  additionalCents   Int
+  additionalDays    Int
+  reason            String   @db.Text
+  status            String   @default("PENDING") // PENDING | APPROVED | DECLINED | PAID
+  createdAt         DateTime @default(now())
+
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// Project workspace "Issues" tab (spec §15) — a lighter-weight tracker
+// than ProjectTask for problems/blockers surfaced during delivery
+// (e.g. "site photos don't match the survey", "client hasn't responded
+// in 5 days"). Deliberately a separate model from ProjectTask rather than
+// reusing it with an "isIssue" flag — issues and tasks have different
+// lifecycles (issues resolve; tasks complete) and mixing them would make
+// both list views noisier.
+model ProjectIssue {
+  id           String    @id @default(uuid())
+  projectId    String
+  raisedById   String
+  title        String
+  description  String    @db.Text
+  severity     String    @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  status       String    @default("OPEN") // OPEN | IN_PROGRESS | RESOLVED | WONT_FIX
+  resolvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  project      Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+}
+
+// Project workspace "Approvals" tab (spec §15) — a generic approval
+// request tied to a project, for milestones/deliverables/change orders
+// that need an explicit client or ops sign-off distinct from the
+// project's overall status. Quote approval already has its own
+// dedicated flow (Quote.status) since it's the one approval every
+// project always needs; this model covers the others, which are optional
+// and vary per project.
+model Approval {
+  id            String    @id @default(uuid())
+  projectId     String
+  requestedById String
+  subjectType   String // "MILESTONE" | "DELIVERABLE" | "CHANGE_ORDER"
+  subjectId     String
+  title         String
+  status        String    @default("PENDING") // PENDING | APPROVED | REJECTED
+  decidedById   String?
+  decidedAt     DateTime?
+  createdAt     DateTime  @default(now())
+
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId, status])
+}
+
+// ---------------------------------------------------------------
+// PROFESSIONALS & MATCHING (spec §20-22)
+// ---------------------------------------------------------------
+
+model ProfessionalProfile {
+  id               String             @id @default(uuid())
+  userId           String             @unique
+  title            String?
+  bio              String?            @db.Text
+  yearsExperience  Int?
+  softwareSkills   String[]
+  jurisdictions    String[]
+  certifications   String[]
+  licenseNumber    String?
+  licenseState     String?
+  portfolioUrl     String?
+  hourlyRateCents  Int?
+  timezone         String?
+  status           ProfessionalStatus @default(APPLIED)
+  qualityScore     Float?             // rolling score from reviews
+  completedProjects Int               @default(0)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  user             User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  disciplines      ProfessionalDiscipline[]
+  verification     ProfessionalVerification?
+  availability     Availability[]
+  assignments      Assignment[]
+  reviewsReceived  Review[]           @relation("ReviewSubject")
+}
+
+model ProfessionalDiscipline {
+  id             String              @id @default(uuid())
+  professionalId String
+  disciplineId   String
+
+  professional   ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+  discipline     Discipline          @relation(fields: [disciplineId], references: [id])
+
+  @@unique([professionalId, disciplineId])
+}
+
+model ProfessionalVerification {
+  id               String              @id @default(uuid())
+  professionalId   String              @unique
+  documentsStorageKeys String[]        // private, never public
+  reviewedByUserId String?
+  reviewNotes      String?
+  status           ProfessionalStatus  @default(UNDER_REVIEW)
+  decidedAt        DateTime?
+
+  professional     ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+}
+
+model Availability {
+  id             String              @id @default(uuid())
+  professionalId String
+  weekdayMask    Int // bitmask Mon..Sun
+  hoursPerWeek   Int?
+  startDate      DateTime?
+  endDate        DateTime?
+
+  professional   ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+}
+
+model Assignment {
+  id             String              @id @default(uuid())
+  projectId      String
+  professionalId String
+  roleOnProject  String
+  matchScore     Float?
+  matchBreakdown Json? // { skill, experience, availability, jurisdiction, quality, cost }
+  status         String              @default("PROPOSED") // PROPOSED | ACCEPTED | DECLINED | REMOVED
+  proposedAt     DateTime            @default(now())
+  respondedAt    DateTime?
+
+  project        Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  professional   ProfessionalProfile @relation(fields: [professionalId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([professionalId])
+}
+
+model Review {
+  id             String               @id @default(uuid())
+  projectId      String
+  authorId       String
+  subjectProfessionalId String?
+  rating         Int // 1-5
+  comment        String?              @db.Text
+  createdAt      DateTime             @default(now())
+
+  project        Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author         User                 @relation("ReviewAuthor", fields: [authorId], references: [id])
+  subject        ProfessionalProfile? @relation("ReviewSubject", fields: [subjectProfessionalId], references: [id])
+}
+
+// ---------------------------------------------------------------
+// PAYMENTS & FINANCE (spec §33-34)
+// ---------------------------------------------------------------
+
+model Payment {
+  id                  String        @id @default(uuid())
+  projectId           String
+  kind                PaymentKind
+  status              PaymentStatus @default(PENDING)
+  amountCents         Int
+  currency            String        @default("USD")
+  stripePaymentIntentId String?     @unique
+  stripeCheckoutSessionId String?   @unique
+  stripeChargeId      String?
+  platformFeeCents    Int?
+  payoutToProfessionalId String?
+  createdAt           DateTime      @default(now())
+  updatedAt           DateTime      @updatedAt
+
+  project             Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+model Invoice {
+  id             String   @id @default(uuid())
+  organizationId String?
+  invoiceNumber  String   @unique
+  amountCents    Int
+  currency       String   @default("USD")
+  status         String   @default("OPEN") // OPEN | PAID | VOID | OVERDUE
+  dueDate        DateTime?
+  paidAt         DateTime?
+  pdfStorageKey  String?
+  createdAt      DateTime @default(now())
+
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+}
+
+// ---------------------------------------------------------------
+// MESSAGING & NOTIFICATIONS (spec §28-29)
+// ---------------------------------------------------------------
+
+model MessageThread {
+  id         String    @id @default(uuid())
+  projectId  String
+  isInternal Boolean   @default(false) // internal notes never shown to clients
+  createdAt  DateTime  @default(now())
+
+  project    Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  messages   Message[]
+}
+
+model Message {
+  id            String        @id @default(uuid())
+  threadId      String
+  senderId      String
+  body          String        @db.Text
+  attachments   String[] // storage keys
+  mentions      String[] // userIds
+  readByUserIds String[]
+  createdAt     DateTime      @default(now())
+
+  thread        MessageThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  sender        User          @relation("MessageSender", fields: [senderId], references: [id])
+
+  @@index([threadId])
+}
+
+model Notification {
+  id        String              @id @default(uuid())
+  userId    String
+  channel   NotificationChannel @default(IN_APP)
+  type      String // quote_ready | task_assigned | payment_received | ...
+  title     String
+  body      String
+  link      String?
+  readAt    DateTime?
+  createdAt DateTime            @default(now())
+
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt])
+}
+
+// ---------------------------------------------------------------
+// SUPPORT, AUDIT, WEBHOOKS (spec §44, §85)
+// ---------------------------------------------------------------
+
+model SupportTicket {
+  id         String   @id @default(uuid())
+  userId     String?
+  category   String // sales | enterprise | professional | support | general
+  subject    String
+  message    String   @db.Text
+  status     String   @default("OPEN")
+  createdAt  DateTime @default(now())
+
+  user       User?    @relation(fields: [userId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String // e.g. "quote.approved", "professional.rejected"
+  entityType String
+  entityId   String
+  metadata   Json?
+  ipAddress  String?
+  createdAt  DateTime @default(now())
+
+  actor      User?    @relation(fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([actorId])
+}
+
+model WebhookEvent {
+  id          String   @id @default(uuid())
+  source      String // stripe | resend | auth
+  eventType   String
+  externalId  String   @unique // for idempotency
+  payload     Json
+  processedAt DateTime?
+  createdAt   DateTime @default(now())
+}

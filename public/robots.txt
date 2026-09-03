@@ -1,0 +1,8 @@
+User-agent: *
+Allow: /
+Disallow: /dashboard
+Disallow: /admin
+Disallow: /pro
+Disallow: /api
+
+Sitemap: https://brievv.com/sitemap.xml

@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    color-scheme: light;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+
+  body {
+    @apply text-ink antialiased;
+    font-family: var(--font-sans);
+  }
+
+  h1, h2, h3, h4 {
+    font-family: var(--font-display);
+  }
+
+  ::selection {
+    @apply bg-orange/20;
+  }
+
+  :focus-visible {
+    outline: 2px solid theme("colors.orange.DEFAULT");
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /* Subtle blueprint grid — used sparingly per spec §78, not on every section */
+  .bp-grid {
+    background-image:
+      linear-gradient(rgba(244, 241, 232, 0.06) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(244, 241, 232, 0.06) 1px, transparent 1px);
+    background-size: 48px 48px;
+  }
+
+  .mono-label {
+    @apply font-mono text-[0.72rem] uppercase tracking-[0.08em] text-steel;
+  }
+
+  .container-brievv {
+    @apply mx-auto w-full max-w-7xl px-6 sm:px-8 lg:px-10;
+  }
+
+  /* ---- Glass / water-glass surfaces ---- */
+  .glass-surface {
+    background: rgba(255, 255, 255, 0.55);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(255, 255, 255, 0.6);
+    box-shadow:
+      0 1px 1px rgba(255, 255, 255, 0.6) inset,
+      0 8px 32px rgba(8, 17, 28, 0.08);
+  }
+
+  .glass-surface-dark {
+    background: rgba(11, 39, 68, 0.55);
+    -webkit-backdrop-filter: blur(20px) saturate(160%);
+    backdrop-filter: blur(20px) saturate(160%);
+    border: 1px solid rgba(244, 241, 232, 0.14);
+    box-shadow:
+      0 1px 1px rgba(244, 241, 232, 0.08) inset,
+      0 8px 32px rgba(0, 0, 0, 0.25);
+  }
+
+  .glass-nav {
+    background: rgba(244, 241, 232, 0.65);
+    -webkit-backdrop-filter: blur(16px) saturate(160%);
+    backdrop-filter: blur(16px) saturate(160%);
+  }
+}
+
+@layer utilities {
+  /* Ambient background blobs — slow drift, paused entirely under reduced-motion (see base layer) */
+  @keyframes drift-a {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(4%, 6%) scale(1.08); }
+  }
+  @keyframes drift-b {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(-5%, -4%) scale(1.05); }
+  }
+  @keyframes drift-c {
+    0%, 100% { transform: translate(0, 0) scale(1); }
+    50% { transform: translate(3%, -5%) scale(1.1); }
+  }
+  .animate-drift-a { animation: drift-a 26s ease-in-out infinite; }
+  .animate-drift-b { animation: drift-b 32s ease-in-out infinite; }
+  .animate-drift-c { animation: drift-c 22s ease-in-out infinite; }
+}
