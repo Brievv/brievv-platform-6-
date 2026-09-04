@@ -5,6 +5,9 @@
 @layer base {
   :root {
     color-scheme: light;
+    --font-sans: "Trebuchet MS", sans-serif;
+    --font-display: Georgia, serif;
+    --font-mono: Consolas, monospace;
   }
 
   html {

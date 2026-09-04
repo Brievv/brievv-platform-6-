@@ -3,6 +3,9 @@ const scriptSources = ["'self'", "'unsafe-inline'", ...(process.env.NODE_ENV ===
 
 const nextConfig = {
   reactStrictMode: true,
+  experimental: {
+    serverComponentsExternalPackages: ["@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner"],
+  },
   images: {
     remotePatterns: [
       // Add S3/R2/Supabase Storage public host(s) here in production, e.g.:
