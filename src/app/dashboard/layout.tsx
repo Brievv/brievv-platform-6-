@@ -1,6 +1,8 @@
 import { DashboardSidebar } from "@/components/layout/dashboard-shell";
 import { CommandPalette } from "@/components/features/command-palette";
 
+export const dynamic = "force-dynamic";
+
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen bg-paper">

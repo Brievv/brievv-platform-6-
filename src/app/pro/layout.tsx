@@ -6,6 +6,8 @@ import { CommandPalette } from "@/components/features/command-palette";
 
 const ALLOWED_ROLES = ["PROFESSIONAL", "SUPER_ADMIN", "OPERATIONS_ADMIN"];
 
+export const dynamic = "force-dynamic";
+
 export default async function ProLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role as string | undefined;

@@ -6,6 +6,8 @@ import { CommandPalette } from "@/components/features/command-palette";
 
 const ADMIN_ROLES = ["SUPER_ADMIN", "OPERATIONS_ADMIN", "PROJECT_MANAGER", "FINANCE_ADMIN", "QUALITY_MANAGER", "SUPPORT_AGENT"];
 
+export const dynamic = "force-dynamic";
+
 export default async function AdminLayout({ children }: { children: React.ReactNode }) {
   const session = await getServerSession(authOptions);
   const role = (session?.user as any)?.role as string | undefined;
